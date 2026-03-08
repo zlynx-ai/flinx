@@ -1,0 +1,158 @@
+
+import jax
+import jax.numpy as jnp
+from flax import nnx
+
+from flinx.modules import MLP, Attention, RMSNorm, RotaryEmbedding
+from flinx.models.base import Flinx
+
+from .tokenizer import LlamaTokenizer
+from .config import LlamaConfig
+from ..utils import get_dtype, get_act_fn
+from ..infer import LanguageModel
+
+
+
+class LlamaTransformer(nnx.Module):
+    def __init__(self, key, config: LlamaConfig, layer_idx: int | None = None):
+        super().__init__()
+        attention_key, mlp_key = jax.random.split(key, 2)
+
+        self.self_attention = Attention(
+            attention_key,
+            config.hidden_size,
+            config.attention_head,
+            config.head_dim,
+            config.kv_head,
+            config.attention_bias,
+            layer_idx,
+            dtype=get_dtype(config.dtype),
+            use_cache=config.use_cache,
+        )
+        self.mlp = MLP(
+            mlp_key,
+            config.hidden_size,
+            config.intermediate_size,
+            get_act_fn(config.act_fn),
+            config.bias,
+            dtype=get_dtype(config.dtype),
+        )
+        self.input_layernorm = RMSNorm(config.hidden_size, config.norm_eps)
+        self.post_attention_layernorm = RMSNorm(config.hidden_size, config.norm_eps)
+
+    def __call__(
+        self,
+        hidden_states: jax.Array,
+        attention_mask: jax.Array,
+        position_embedding: tuple[jax.Array],
+    ):
+        residual = hidden_states
+        hidden_states = self.input_layernorm(hidden_states)
+
+        hidden_states = (
+            self.self_attention(hidden_states, attention_mask, position_embedding)
+            + residual
+        )
+
+        residual = hidden_states
+        hidden_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = self.mlp(hidden_states) + residual
+        return hidden_states
+
+
+class Llama(nnx.Module):
+    def __init__(self, config: LlamaConfig, key):
+        super().__init__()
+        self.num_hidden_layers = config.num_hidden_layers
+        embedding_key, transformer_key = jax.random.split(key, 2)
+        self.embed_tokens = nnx.Embed(
+            config.vocab_size,
+            config.hidden_size,
+            dtype=get_dtype(config.dtype),
+            param_dtype=get_dtype(config.dtype),
+            rngs=nnx.Rngs(embedding_key),
+        )
+
+        self.rotary = RotaryEmbedding(
+            config.base,
+            config.head_dim,
+            config.max_position_embedding,
+            config.rope_scaling,
+        )
+
+        self.layernorm = RMSNorm(config.hidden_size, config.norm_eps)
+
+        self.blocks = nnx.List(
+            [
+                LlamaTransformer(key, config, layer_idx)
+                for layer_idx, key in enumerate(
+                    jax.random.split(transformer_key, config.num_hidden_layers)
+                )
+            ]
+        )
+
+    def __call__(
+        self,
+        input_ids: jax.Array,
+        attention_mask: jax.Array | None = None,
+        position_ids: jax.Array | None = None,
+    ):
+        if position_ids is None:
+            if attention_mask is not None:
+                position_ids = jnp.cumsum(attention_mask, axis=-1) - 1
+                position_ids = jnp.maximum(position_ids, 0)
+            else:
+                B, S = input_ids.shape
+                position_ids = jnp.expand_dims(jnp.arange(S), axis=0).repeat(B, axis=0)
+
+        hidden_states = self.embed_tokens(input_ids)
+        position_embedding = self.rotary(hidden_states, position_ids)
+
+        if attention_mask is not None:
+            q_len = input_ids.shape[1]
+            q_mask = jnp.ones(input_ids.shape, dtype=jnp.bool_)
+            k_mask = attention_mask > 0
+
+            causal_mask = nnx.make_attention_mask(q_mask, k_mask)
+
+            if q_len > 1:
+                causal_mask = nnx.combine_masks(
+                    causal_mask, nnx.make_causal_mask(input_ids)
+                )
+        else:
+            causal_mask = None
+
+        for layer in self.blocks[: self.num_hidden_layers]:
+            hidden_states = layer(hidden_states, causal_mask, position_embedding)
+
+        return self.layernorm(hidden_states)
+
+
+class LlamaLanguageModel(LanguageModel, Flinx):
+    processor = LlamaTokenizer
+    def __init__(
+        self, config: LlamaConfig, key: jax.typing.ArrayLike = jax.random.key(42)
+    ):
+        nnx.Module.__init__(self)
+        LanguageModel.__init__(self, config=config)
+        model_key, lm_head_key = jax.random.split(key, 2)
+        self.model = Llama(config=config, key=model_key)
+        self.lm_head = nnx.Linear(
+            config.hidden_size,
+            config.vocab_size,
+            use_bias=config.bias,
+            dtype=get_dtype(config.dtype),
+            param_dtype=get_dtype(config.dtype),
+            rngs=nnx.Rngs(lm_head_key),
+        )
+
+    def __call__(
+        self,
+        input_ids: jax.Array,
+        attention_mask: jax.Array | None = None,
+        position_ids: jax.Array | None = None,
+    ):
+        hidden_states = self.model(input_ids, attention_mask, position_ids)
+        logits = self.lm_head(hidden_states)
+
+        return logits
