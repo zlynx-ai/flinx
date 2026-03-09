@@ -27,6 +27,7 @@ class LanguageConfig:
     norm_eps: float
     bias: bool
     dtype: str
+    param_dtype: str
     use_cache: bool
 
     # attn

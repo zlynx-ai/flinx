@@ -3,10 +3,10 @@
 import jax, jax.numpy as jnp
 from flax import nnx
 
-from .cache import KVCacheBase
+from .cache import KVCache
 from .rope import apply_rope
 
-class Attention(KVCacheBase):
+class Attention(nnx.Module):
     def __init__(
         self, key, 
         hidden_size: int, 
@@ -16,17 +16,21 @@ class Attention(KVCacheBase):
         bias: bool = False, 
         layer_idx: int | None = None,
         dtype=jnp.bfloat16,
+        param_dtype=jnp.float32,
         use_cache: bool = True
     ):
         super().__init__()
         self.layer_idx = layer_idx
         self.dtype = dtype
-        self.use_cache = use_cache
-
+        
         self.attention_head = attention_head
         kv_head = kv_head if kv_head is not None else attention_head
         self.head_dim = head_dim
         self.kv_head = kv_head
+
+        # Functionally encapsulate KV Cache state
+        self.use_cache = use_cache
+        self.kv_cache = KVCache(kv_head=self.kv_head, head_dim=self.head_dim, dtype=self.dtype)
 
         q_key, k_key, v_key, o_key = jax.random.split(key, 4)
         self.q_proj = nnx.Linear(
@@ -34,7 +38,7 @@ class Attention(KVCacheBase):
             attention_head * head_dim,
             use_bias=bias, 
             dtype=dtype, 
-            param_dtype=dtype, 
+            param_dtype=param_dtype, 
             rngs=nnx.Rngs(q_key)
         )
         self.k_proj = nnx.Linear(
@@ -42,7 +46,7 @@ class Attention(KVCacheBase):
             kv_head * head_dim,
             use_bias=bias, 
             dtype=dtype, 
-            param_dtype=dtype, 
+            param_dtype=param_dtype, 
             rngs=nnx.Rngs(k_key)
         )
         self.v_proj = nnx.Linear(
@@ -50,7 +54,7 @@ class Attention(KVCacheBase):
             kv_head * head_dim,
             use_bias=bias, 
             dtype=dtype, 
-            param_dtype=dtype, 
+            param_dtype=param_dtype, 
             rngs=nnx.Rngs(v_key)
         )
         self.o_proj = nnx.Linear(
@@ -60,7 +64,7 @@ class Attention(KVCacheBase):
             hidden_size,
             use_bias=bias, 
             dtype=dtype, 
-            param_dtype=dtype, 
+            param_dtype=param_dtype, 
             rngs=nnx.Rngs(o_key)
         )
 
@@ -79,7 +83,7 @@ class Attention(KVCacheBase):
             query, key = apply_rope(query, key, cos, sin)
 
         if self.use_cache:
-            key, value = self.update_cache(key, value)
+            key, value = self.kv_cache.update_cache(key, value)
 
         # GQA: repeat KV heads to match query heads
         if self.attention_head > self.kv_head:

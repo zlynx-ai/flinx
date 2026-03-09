@@ -27,6 +27,7 @@ class LlamaTransformer(nnx.Module):
             config.attention_bias,
             layer_idx,
             dtype=get_dtype(config.dtype),
+            param_dtype=get_dtype(config.param_dtype),
             use_cache=config.use_cache,
         )
         self.mlp = MLP(
@@ -36,6 +37,7 @@ class LlamaTransformer(nnx.Module):
             get_act_fn(config.act_fn),
             config.bias,
             dtype=get_dtype(config.dtype),
+            param_dtype=get_dtype(config.param_dtype),
         )
         self.input_layernorm = RMSNorm(config.hidden_size, config.norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, config.norm_eps)
@@ -69,7 +71,7 @@ class Llama(nnx.Module):
             config.vocab_size,
             config.hidden_size,
             dtype=get_dtype(config.dtype),
-            param_dtype=get_dtype(config.dtype),
+            param_dtype=get_dtype(config.param_dtype),
             rngs=nnx.Rngs(embedding_key),
         )
 
@@ -142,7 +144,7 @@ class LlamaLanguageModel(LanguageModel, Flinx):
             config.vocab_size,
             use_bias=config.bias,
             dtype=get_dtype(config.dtype),
-            param_dtype=get_dtype(config.dtype),
+            param_dtype=get_dtype(config.param_dtype),
             rngs=nnx.Rngs(lm_head_key),
         )
 
@@ -151,8 +153,34 @@ class LlamaLanguageModel(LanguageModel, Flinx):
         input_ids: jax.Array,
         attention_mask: jax.Array | None = None,
         position_ids: jax.Array | None = None,
+        labels: jax.Array | None = None,
     ):
+        from flinx.models.outputs import CausalLMOutput
+        import optax
+        
         hidden_states = self.model(input_ids, attention_mask, position_ids)
         logits = self.lm_head(hidden_states)
+        
+        loss = None
+        if labels is not None:
+            # Shift so that tokens < n predict n
+            shift_logits = logits[..., :-1, :]
+            shift_labels = labels[..., 1:]
+            
+            # Use optax softmax cross entropy
+            loss_all = optax.softmax_cross_entropy_with_integer_labels(
+                logits=shift_logits, labels=shift_labels
+            )
+            
+            if attention_mask is not None:
+                # Discard padding tokens from the loss
+                shift_mask = attention_mask[..., 1:]
+                loss = jnp.sum(loss_all * shift_mask) / jnp.maximum(jnp.sum(shift_mask), 1)
+            else:
+                loss = jnp.mean(loss_all)
 
-        return logits
+        return CausalLMOutput(
+            loss=loss,
+            logits=logits,
+            hidden_states=hidden_states if getattr(self.config, "output_hidden_states", False) else None
+        )

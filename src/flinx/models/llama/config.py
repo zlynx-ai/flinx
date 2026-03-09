@@ -19,6 +19,7 @@ class LlamaConfig(LanguageConfig):
     norm_eps: float = 1e-6
     bias: bool = False
     dtype: str = "bfloat16"
+    param_dtype: str = "float32"
     use_cache: bool = True
 
     # attn

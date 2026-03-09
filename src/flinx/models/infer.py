@@ -77,10 +77,10 @@ class LanguageModel:
             self.kwargs["config"] = self.config
 
     def init_cache(self, batch_size: int, max_seq_len: int):
-        from ..modules.cache import KVCacheBase
+        from ..modules.cache import KVCache
 
         for _, module in nnx.iter_modules(self):
-            if isinstance(module, KVCacheBase):
+            if isinstance(module, KVCache):
                 module.init_cache_state(batch_size, max_seq_len)
 
     def generate(
@@ -102,12 +102,9 @@ class LanguageModel:
         cfg = getattr(self, "config", getattr(self, "kwargs", {}).get("config", None))
         use_cache = True if cfg is None else getattr(cfg, "use_cache", True)
 
-        # Enforce use_cache on all submodules (like Attention) since checkpoint config
-        # might have use_cache=False and model.config.replace() doesn't update instances
-        from ..modules.cache import KVCacheBase
-
+        # Enforce use_cache on submodules that possess the boolean attribute
         for _, module in nnx.iter_modules(self):
-            if isinstance(module, KVCacheBase) and hasattr(module, "use_cache"):
+            if hasattr(module, "use_cache"):
                 module.use_cache = use_cache
 
         if attention_mask is None:
@@ -132,8 +129,8 @@ class LanguageModel:
         # Prefill on prompt
         prompt_position_ids = jnp.cumsum(attention_mask.astype(jnp.int32), axis=-1) - 1
         prompt_position_ids = jnp.maximum(prompt_position_ids, 0)
-        logits = _forward_step(self, input_ids, attention_mask, prompt_position_ids)
-        last_logit = logits[:, -1, :]  # shape (B, V)
+        outputs = _forward_step(self, input_ids, attention_mask, prompt_position_ids)
+        last_logit = outputs.logits[:, -1, :]  # shape (B, V)
 
         # Build suppress mask (tokens that should never be sampled)
         if suppress_tokens:
@@ -142,12 +139,25 @@ class LanguageModel:
                 suppress_mask = suppress_mask.at[t].set(True)
         else:
             suppress_mask = None
+            
+        # Split the model into its GraphDef (structure) and dynamic Pytree State
+        graphdef, model_state = nnx.split(self)
 
-        # Decode loop — each step dispatches a JIT-compiled forward pass to device
-        for i in range(max_new_tokens):
+        # Define the while loop condition
+        def cond_fn(loop_state):
+            i, out_ids, out_mask, finished, last_logit, suppress_mask_state, key, _ = loop_state
+            not_done = i < max_new_tokens
+            if eos_token_id is not None:
+                not_done = not_done & (~jnp.all(finished))
+            return not_done
+
+        # Define the while loop body (Must be purely functional)
+        def body_fn(loop_state):
+            i, out_ids, out_mask, finished, last_logit, suppress_mask_state, key, current_model_state = loop_state
+            
             cur_logit = last_logit
-            if suppress_mask is not None:
-                cur_logit = jnp.where(suppress_mask, -1e9, cur_logit)
+            if suppress_mask_state is not None:
+                cur_logit = jnp.where(suppress_mask_state, -1e9, cur_logit)
 
             next_token, key = sample_token(
                 cur_logit, out_ids, out_mask,
@@ -160,28 +170,48 @@ class LanguageModel:
 
             next_token_2d = jnp.expand_dims(next_token.astype(jnp.int32), axis=1)
 
-            # Write generated token and mark mask as valid
             out_ids = out_ids.at[:, S + i].set(next_token.astype(jnp.int32))
             out_mask = out_mask.at[:, S + i].set(True)
 
-            # Masking for next forward pass
             indices = jnp.arange(max_len)
             valid_mask = indices <= (S + i)
             static_mask = out_mask & valid_mask
+
+            # We must reconstruct the model purely for this step's forward pass
+            # This creates a temporary view of the model tied to `current_model_state`
+            temp_model = nnx.merge(graphdef, current_model_state)
 
             if use_cache:
                 decode_pos = jnp.expand_dims(
                     jnp.sum(static_mask.astype(jnp.int32), axis=-1) - 1, axis=-1
                 )
-                logits = _forward_step(self, next_token_2d, static_mask, decode_pos)
-                last_logit = logits[:, -1, :]
+                outputs = _forward_step(temp_model, next_token_2d, static_mask, decode_pos)
+                last_logit = outputs.logits[:, -1, :]
             else:
                 cur_pos = jnp.cumsum(static_mask.astype(jnp.int32), axis=-1) - 1
                 cur_pos = jnp.maximum(cur_pos, 0)
-                logits = _forward_step(self, out_ids, static_mask, cur_pos)
+                outputs = _forward_step(temp_model, out_ids, static_mask, cur_pos)
                 last_logit = jax.lax.dynamic_slice(
-                    logits, (0, S + i, 0), (B, 1, logits.shape[-1])
+                    outputs.logits, (0, S + i, 0), (B, 1, outputs.logits.shape[-1])
                 )[:, 0, :]
+                
+            # Split the temporary model back out to capture any updated KV cache states
+            _, next_model_state = nnx.split(temp_model)
+                
+            return (i + 1, out_ids, out_mask, finished, last_logit, suppress_mask_state, key, next_model_state)
+
+        # Execute loop (pure compilation over PyTrees)
+        @jax.jit
+        def _execute_loop(init_loop_state):
+            return jax.lax.while_loop(cond_fn, body_fn, init_loop_state)
+            
+        init_loop_state = (jnp.int32(0), out_ids, out_mask, finished, last_logit, suppress_mask, key, model_state)
+        final_loop_state = _execute_loop(init_loop_state)
+        
+        _, out_ids, _, _, _, _, _, final_model_state = final_loop_state
+        
+        # Update our actual object instance with any state changes (like cache index increments)
+        nnx.update(self, final_model_state)
 
         return out_ids
 

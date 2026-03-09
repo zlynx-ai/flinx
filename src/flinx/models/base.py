@@ -14,45 +14,44 @@ from .. import models
 class Flinx(nnx.Module):
 
     @classmethod
-    def load(cls, path: str | Path, dtype=None):
-        if isinstance(path, str):
-            path = Path(path)
+    def load_config(cls, path: str | Path):
+        path = Path(path).resolve()
+        with open(path / "config.json", "r") as config_file:
+            config_dict = json.load(config_file)
 
-        if not path.is_absolute():
-            path = path.resolve()
+        arch_name = config_dict.get("architecture")
+        if arch_name is None and cls is not Flinx:
+            arch_name = cls.__name__
 
-        if cls is Flinx:
-            with open(path / "config.json", "r") as config_file:
-                config: dict = json.load(config_file)
+        probably_config_class = arch_name.split("LanguageModel")[0].strip() + "Config" if arch_name else "LanguageConfig"
+        config_class = getattr(models, probably_config_class, None)
+        
+        if config_class is None:
+            from .config import LanguageConfig
+            config_class = LanguageConfig
 
-            arch = config.get("architecture")
-            probably_config_class = arch.split("LanguageModel")[0].strip() + "Config"
-            arch = getattr(models, arch)
+        return config_class(**config_dict)
 
-        else:
-            arch = cls
-            with open(path / "config.json", "r") as config_file:
-                config = json.load(config_file)
+    @classmethod
+    def load(cls, path: str | Path, dtype=None, config=None):
+        path = Path(path).resolve()
 
-            arch_name = config.get("architecture", None)
-            if arch_name is None:
-                arch_name = arch.__name__
+        if config is None:
+            config = cls.load_config(path)
 
-            probably_config_class = (
-                arch_name.split("LanguageModel")[0].strip() + "Config"
-            )
+        arch_name = config.architecture
+        if arch_name is None and cls is not Flinx:
+            arch_name = cls.__name__
+            
+        if arch_name is None:
+            raise ValueError("Could not determine model architecture.")
 
+        arch = getattr(models, arch_name, cls if cls is not Flinx else None)
+
+        processor = None
         processor_class = getattr(arch, "processor", None)
         if processor_class is not None:
             processor = processor_class.load(path)
-
-        config_class = getattr(models, probably_config_class, None)
-        if probably_config_class is None:
-            from .config import LanguageConfig
-
-            config_class = LanguageConfig
-
-        config = config_class(**config)
 
         model = nnx.eval_shape(lambda: arch(config=config))
         gdef, abs_state = nnx.split(model)
@@ -121,6 +120,12 @@ class Flinx(nnx.Module):
         except Exception as e:
             print(e)
 
+
+    def push_hub(self):
+        ...
+
+    def push_kaggle(self):
+        ...
 
 
     def load_from_config(): 

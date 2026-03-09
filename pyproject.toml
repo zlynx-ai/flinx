@@ -1,13 +1,20 @@
 [project]
 name = "flinx"
 version = "0.1.0"
-description = "JAX/Flax model implementation/training library"
+description = "Flinx is a lightweight, highly-customizable deep learning library built on top of JAX and Flax NNX"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "datasets>=4.6.1",
     "flax>=0.12.5",
+    "grain>=0.2.16",
     "jax>=0.9.1",
     "optax>=0.2.6",
     "orbax>=0.1.9",
     "tokenizers>=0.22.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
 ]
