@@ -11,7 +11,7 @@ from .infer import LanguageModel
 from .. import models
 
 
-class Flinx(nnx.Module):
+class Z(nnx.Module):
 
     @classmethod
     def load_config(cls, path: str | Path):
@@ -20,7 +20,7 @@ class Flinx(nnx.Module):
             config_dict = json.load(config_file)
 
         arch_name = config_dict.get("architecture")
-        if arch_name is None and cls is not Flinx:
+        if arch_name is None and cls is not Z:
             arch_name = cls.__name__
 
         probably_config_class = arch_name.split("LanguageModel")[0].strip() + "Config" if arch_name else "LanguageConfig"
@@ -33,27 +33,37 @@ class Flinx(nnx.Module):
         return config_class(**config_dict)
 
     @classmethod
-    def load(cls, path: str | Path, dtype=None, config=None):
+    def load(cls, path: str | Path, dtype=None, config=None, sharding=None, *args, **kwargs):
         path = Path(path).resolve()
 
-        if config is None:
+        if (path / "config.json").exists() and config is None:
             config = cls.load_config(path)
 
-        arch_name = config.architecture
-        if arch_name is None and cls is not Flinx:
-            arch_name = cls.__name__
-            
-        if arch_name is None:
-            raise ValueError("Could not determine model architecture.")
+        arch_name = getattr(config, "architecture", None) if config is not None else None
 
-        arch = getattr(models, arch_name, cls if cls is not Flinx else None)
+        if cls is not Z:
+            if arch_name is None and cls is not Z:
+                arch_name = cls.__name__
+                
+            if arch_name is None:
+                raise ValueError("Could not determine model architecture.")
+
+            arch = getattr(models, arch_name, cls if cls is not Z else None)
+
+            if arch is None:
+                arch = arch_name
 
         processor = None
         processor_class = getattr(arch, "processor", None)
         if processor_class is not None:
             processor = processor_class.load(path)
 
-        model = nnx.eval_shape(lambda: arch(config=config))
+        if config is not None:
+            model = nnx.eval_shape(lambda: arch(config=config, *args, **kwargs))
+
+        else:
+            model = nnx.eval_shape(lambda: arch(*args, **kwargs))
+
         gdef, abs_state = nnx.split(model)
 
         mesh = jax.sharding.Mesh(jax.devices(), ("model",))
@@ -103,18 +113,20 @@ class Flinx(nnx.Module):
         _, state = nnx.split(self)
         try:
             arch = type(self)
-            config = getattr(self, "config", self.kwargs.get("config", None))
+            config = getattr(self, "config", self.kwargs.get("config", None) if hasattr(self, "kwargs") else None)
 
-            if config is None:
-                raise Exception(
-                    f"config is None type, to resolve this send config instance with super().__init__(config=config)."
-                )
+            # if config is None:
+            #     # raise Exception(
+            #     #     f"config is None type, to resolve this send config instance with super().__init__(config=config)."
+            #     # )
+            #     config = None
 
             checkpointer.save(path, state)
             checkpointer.wait_until_finished()
 
-            with open(path / "config.json", "w") as config_file:
-                json.dump(serialization.to_state_dict(config), config_file, indent=2)
+            if config is not None:
+                with open(path / "config.json", "w") as config_file:
+                    json.dump(serialization.to_state_dict(config), config_file, indent=2)
 
             print(f"save model path {path}.")
         except Exception as e:

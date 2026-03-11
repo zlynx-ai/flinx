@@ -6,9 +6,9 @@ import jax
 import jax.numpy as jnp
 import optax
 
-from flinx.models.llama import LlamaConfig, LlamaLanguageModel
-from flinx.trainer.trainer import Trainer, TrainerConfig
-from flinx.trainer.dataset import DatasetConfig
+from zlynx.models.llama import LlamaConfig, LlamaLanguageModel
+from zlynx.trainer.trainer import Trainer, TrainerConfig
+from zlynx.trainer.dataset import DatasetConfig
 
 
 # ── tiny model ──

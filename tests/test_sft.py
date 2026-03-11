@@ -1,9 +1,9 @@
 import pytest
 import jax
 import jax.numpy as jnp
-from flinx.models.llama import LlamaConfig, LlamaLanguageModel
-from flinx.trainer.sft import SFTTrainer, SFTConfig
-from flinx.trainer.dataset import DatasetConfig
+from zlynx.models.llama import LlamaConfig, LlamaLanguageModel
+from zlynx.trainer.sft import SFTTrainer, SFTConfig
+from zlynx.trainer.dataset import DatasetConfig
 
 # Fake Processor class to mock a Hugging Face Tokenizer
 class DummyProcessor:

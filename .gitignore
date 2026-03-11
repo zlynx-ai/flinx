@@ -6,6 +6,7 @@ build/
 dist/
 wheels/
 *.egg-info
+.ruff_cache/
 
 # Virtual environments
 .venv
@@ -20,3 +21,7 @@ ckpt-*
 
 TODO.md
 
+test_model_local/
+data/
+
+llama-3.2*

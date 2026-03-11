@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import time
-from flinx.models.llama import LlamaConfig, LlamaLanguageModel
+from zlynx.models.llama import LlamaConfig, LlamaLanguageModel
 
 def test_fast_generation():
     print("\n=== Testing JAX-Native High-Throughput Generation ===")

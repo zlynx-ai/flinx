@@ -3,8 +3,8 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from flinx.modules import MLP, Attention, RMSNorm, RotaryEmbedding
-from flinx.models.base import Flinx
+from zlynx.modules import MLP, Attention, RMSNorm, RotaryEmbedding
+from zlynx.models.base import Z
 
 from .tokenizer import LlamaTokenizer
 from .config import LlamaConfig
@@ -130,7 +130,7 @@ class Llama(nnx.Module):
         return self.layernorm(hidden_states)
 
 
-class LlamaLanguageModel(LanguageModel, Flinx):
+class LlamaLanguageModel(LanguageModel, Z):
     processor = LlamaTokenizer
     def __init__(
         self, config: LlamaConfig, key: jax.typing.ArrayLike = jax.random.key(42)
@@ -155,7 +155,7 @@ class LlamaLanguageModel(LanguageModel, Flinx):
         position_ids: jax.Array | None = None,
         labels: jax.Array | None = None,
     ):
-        from flinx.models.outputs import CausalLMOutput
+        from zlynx.models.outputs import CausalLMOutput
         import optax
         
         hidden_states = self.model(input_ids, attention_mask, position_ids)

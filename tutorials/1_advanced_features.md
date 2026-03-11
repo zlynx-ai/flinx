@@ -1,13 +1,13 @@
-# Flinx: Deep Dive Tutorial
+# Zlynx: Deep Dive Tutorial
 
-Welcome to the Flinx advanced features tutorial. This guide covers how to leverage the powerful optimizations we've built, including Automatic Sharding, the enhanced Trainer, and the vast suite of Parameter-Efficient Fine-Tuning (PEFT) techniques.
+Welcome to the Zlynx advanced features tutorial. This guide covers how to leverage the powerful optimizations we've built, including Automatic Sharding, the enhanced Trainer, and the vast suite of Parameter-Efficient Fine-Tuning (PEFT) techniques.
 
 ## 1. Automatic Sharding & Distributed Loading
 
-Flinx takes the headache out of large model partitioning. When loading a model, use the `sharding` argument. Flinx uses `jax.sharding.NamedSharding` internally.
+Zlynx takes the headache out of large model partitioning. When loading a model, use the `sharding` argument. Zlynx uses `jax.sharding.NamedSharding` internally.
 
 ```python
-from flinx.models.base import Flinx
+from zlynx.models.base import Zlynx
 
 # Options for 'sharding':
 # - "fsdp": Fully Sharded Data Parallel (slices parameters and optimizer states across axis "fsdp")
@@ -15,7 +15,7 @@ from flinx.models.base import Flinx
 # - "tp": Tensor Parallel (slices specific weight matrices)
 # - "auto": Fallback heuristic depending on model param count and device memory
 
-model, processor = Flinx.from_pretrained(
+model, processor = Zlynx.from_pretrained(
     "path/to/checkpoint",
     sharding="fsdp",
     dtype="bfloat16"
@@ -24,12 +24,12 @@ model, processor = Flinx.from_pretrained(
 
 ## 2. Advanced PEFT Architectures
 
-Flinx implements adapters straight into the `flax.nnx` module graph using an elegant tree-traversal replacement utility `apply_peft`.
+Zlynx implements adapters straight into the `flax.nnx` module graph using an elegant tree-traversal replacement utility `apply_peft`.
 
 ### Applying Adapters
 
 ```python
-from flinx.trainer.peft import apply_peft
+from zlynx.trainer.peft import apply_peft
 
 # In-place modifies the model by wrapping specified target modules
 # with your chosen adapter.
@@ -58,7 +58,7 @@ GaLore (Gradient Low-Rank Projection) is an entirely different beast. It operate
 Just pass `"galore_adamw"` to the `TrainerConfig`:
 
 ```python
-from flinx.trainer.trainer import TrainerConfig
+from zlynx.trainer.trainer import TrainerConfig
 
 config = TrainerConfig(
     optimizer="galore_adamw",
@@ -72,8 +72,8 @@ config = TrainerConfig(
 
 ## 4. Trainer Enhancements: Accumulation, Logging & Checkpointing
 
-The Flinx `Trainer` integrates tightly with major workflow elements:
+The Zlynx `Trainer` integrates tightly with major workflow elements:
 
-- **Gradient Accumulation:** Use `gradient_accumulation_steps=N` inside `TrainerConfig` to simulate huge batches on limited VRAM hardware. Flinx handles the inner micro-batch accumulation.
+- **Gradient Accumulation:** Use `gradient_accumulation_steps=N` inside `TrainerConfig` to simulate huge batches on limited VRAM hardware. Zlynx handles the inner micro-batch accumulation.
 - **Orbax Checkpoints:** Safely auto-rotates weights using Google's `ocp.CheckpointManager` without arbitrary file I/O overhead.
 - **Integrated Logging:** Pass `log_to=["stdout", "wandb", "json"]` completely natively. You can also inject `logging_fn` dicts to track custom perplexities or metrics per step!

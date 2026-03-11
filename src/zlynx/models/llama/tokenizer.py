@@ -2,7 +2,7 @@
 
 
 
-from flinx.processor import Tokenizer
+from zlynx.processor import Tokenizer
 
 
 class LlamaTokenizer(Tokenizer):

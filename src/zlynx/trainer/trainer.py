@@ -85,7 +85,7 @@ class Logger:
         if "wandb" in backends:
             import wandb
             if not wandb.run:
-                wandb.init(project=run_name or "flinx", name=run_name)
+                wandb.init(project=run_name or "zlynx", name=run_name)
 
         if "json" in backends:
             self._json_path = self.output_dir / "train_log.jsonl"

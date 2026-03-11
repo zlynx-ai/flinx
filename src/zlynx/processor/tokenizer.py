@@ -5,6 +5,8 @@ from tokenizers import Tokenizer as HFTokenizer
 from pathlib import Path
 from typing import List
 
+import jax, jax.numpy as jnp
+
 import logging
 
 
@@ -33,9 +35,18 @@ class Tokenizer:
         
     def __call__(self, inp, *args, **kwds):
         if isinstance(inp, List):
-            return self.encode_batch(inp, *args, **kwds)
-        
-        return self.encode(inp, *args, **kwds)
+            enc = self.encode_batch(inp, *args, **kwds)
+    
+        else:
+            enc = [self.encode(inp, *args, **kwds)]
+
+        tensors = {
+            "input_ids": jnp.array([a.ids for a in enc]), 
+            "attention_mask": jnp.array([a.attention_mask for a in enc])
+        }
+        return tensors
+
+
         
     """
     A :obj:`Tokenizer` works as a pipeline. It processes some raw text as input

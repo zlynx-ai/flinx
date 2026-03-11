@@ -1,8 +1,8 @@
 import jax
 import jax.numpy as jnp
 import optax
-from flinx.trainer.optim import build_optimizer
-from flinx.trainer.trainer import TrainerConfig
+from zlynx.trainer.optim import build_optimizer
+from zlynx.trainer.trainer import TrainerConfig
 
 def test_galore():
     print("=== Testing GaLore ===")

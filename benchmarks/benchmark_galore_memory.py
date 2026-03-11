@@ -1,8 +1,8 @@
 import jax
 import jax.numpy as jnp
 import optax
-from flinx.trainer.optim import build_optimizer
-from flinx.trainer.trainer import TrainerConfig
+from zlynx.trainer.optim import build_optimizer
+from zlynx.trainer.trainer import TrainerConfig
 
 def compute_pytree_bytes(tree):
     leaves, _ = jax.tree_util.tree_flatten(tree)
