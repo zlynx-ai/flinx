@@ -6,12 +6,6 @@ Zlynx is a lightweight, highly-customizable deep learning library built on top o
 
 ## Quick Start
 
-Install via `uv`:
-
 ```bash
-uv pip install -e .
+pip install zlynx
 ```
-
-## Documentation
-
-For in-depth guides on using Zlynx's features like Auto-Sharding, PEFT, and the GaLore Optimizer, please check out the [tutorials/](./tutorials/) directory.
