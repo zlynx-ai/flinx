@@ -15,6 +15,9 @@ class Tokenizer:
 
     def __init__(self, tok: HFTokenizer):
         self.__tokenizer = tok
+
+    def get_processor(self):
+        return self.__tokenizer
     
     @classmethod
     def load(cls, path: Path | str, filename="tokenizer.json"):
@@ -23,8 +26,9 @@ class Tokenizer:
 
         config_file = path / filename
 
-        assert config_file.exists(), \
-            f"there is no `{filename}` in the current dir"
+        if not config_file.exists():
+            logging.warning(f"`{filename}` not found in `{path}`, return None")
+            return None
 
         try:
             tokenizer = HFTokenizer.from_file(str(config_file))
@@ -32,6 +36,10 @@ class Tokenizer:
         except Exception as e:
             logging.error(e)
             return None
+        
+    def save(self, path, pretty=True):
+        self.__tokenizer.save(str(path / "tokenizer.json"), pretty)
+        return "tokenizer.json"
         
     def __call__(self, inp, *args, **kwds):
         if isinstance(inp, List):
@@ -709,19 +717,6 @@ class Tokenizer:
     def pre_tokenizer(self, value):
         """
         The `optional` :class:`~tokenizers.pre_tokenizers.PreTokenizer` in use by the Tokenizer
-        """
-        pass
-
-    def save(self, path, pretty=True):
-        """
-        Save the :class:`~tokenizers.Tokenizer` to the file at the given path.
-
-        Args:
-            path (:obj:`str`):
-                A path to a file in which to save the serialized tokenizer.
-
-            pretty (:obj:`bool`, defaults to :obj:`True`):
-                Whether the JSON file should be pretty formatted.
         """
         pass
 

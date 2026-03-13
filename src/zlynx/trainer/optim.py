@@ -3,6 +3,8 @@ import optax
 import jax
 import jax.numpy as jnp
 
+from .trainer import TrainerConfig
+
 
 OPTIMIZERS = {
     "adamw": optax.adamw,

@@ -8,7 +8,7 @@ from zlynx.models.base import Z
 
 from .tokenizer import LlamaTokenizer
 from .config import LlamaConfig
-from ..utils import get_dtype, get_act_fn
+from ...utils import get_dtype, get_act_fn
 from ..infer import LanguageModel
 
 
@@ -157,7 +157,7 @@ class LlamaLanguageModel(LanguageModel, Z):
     ):
         from zlynx.models.outputs import CausalLMOutput
         import optax
-        
+
         hidden_states = self.model(input_ids, attention_mask, position_ids)
         logits = self.lm_head(hidden_states)
         

@@ -10,7 +10,9 @@ from ..config import LanguageConfig
 
 @struct.dataclass
 class LlamaConfig(LanguageConfig):
-    architecture: str = "LlamaLanguageModel"
+    arch: str = "LlamaLanguageModel"
+    conf: str = "LlamaConfig"
+    processor: str = "LlamaTokenizer"
     vocab_size: int = 80000
     hidden_size: int = 1024
     intermediate_size: int = 2048
@@ -23,8 +25,8 @@ class LlamaConfig(LanguageConfig):
     use_cache: bool = True
 
     # attn
-    attention_head: int = 8
-    kv_head: int = 4
+    attention_head: int = 16
+    kv_head: int = 8
     head_dim: int = 32
     attention_bias: bool = False
 

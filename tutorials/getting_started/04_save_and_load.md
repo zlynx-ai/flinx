@@ -26,6 +26,42 @@ my_model/
 
 ---
 
+## Saving in Different Formats
+
+### Safetensors Format
+
+Save in HuggingFace-compatible safetensors format:
+
+```python
+model.save("./my_model", format="safetensors")
+```
+
+This creates:
+
+```
+my_model/
+├── config.json
+├── model.safetensors.index.json
+├── model-00001-of-xxxxx.safetensors
+└── ...
+```
+
+### Save in Both Formats
+
+```python
+model.save("./my_model", format="all")
+```
+
+### Max Shard Size
+
+Control the max size per safetensors file:
+
+```python
+model.save("./my_model", format="safetensors", max_shard_size_gb=1)
+```
+
+---
+
 ## Loading a Model
 
 Use the **class method** `load()` on your model class:
@@ -122,15 +158,74 @@ model, processor = LlamaLanguageModel.load("./llama-checkpoint", dtype="bfloat16
 
 ---
 
-## Checkpoint Format Summary
+## Loading from HuggingFace
 
-| Method             | What it saves                                         | How to load                                |
-| ------------------ | ----------------------------------------------------- | ------------------------------------------ |
-| `model.save(path)` | Orbax weights + config.json                           | `Model.load(path, **init_args)`            |
-| Trainer auto-save  | Orbax weights in `output/checkpoints/{step}/default/` | `Model.load(path/to/default, **init_args)` |
+Load models directly from HuggingFace Hub using your custom model class:
+
+```python
+from zlynx import Z
+
+class MyModel(Z): ...
+
+model, tokenizer = MyModel.load_hf("username/my-model")
+```
+
+### With sharding
+
+```python
+# Load with model sharding across devices
+model, _ = MyModel.load_hf("username/my-model", sharding="fsdp")
+
+# Load with data parallel sharding
+model, _ = MyModel.load_hf("username/my-model", sharding="ddp")
+```
+
+### With dtype
+
+```python
+# Load in bfloat16 for memory efficiency
+model, tokenizer = MyModel.load_hf("username/my-model", dtype="bfloat16")
+```
+
+### Format options
+
+```python
+# Load safetensors format (default)
+model, tokenizer = MyModel.load_hf("username/my-model", format="safetensors")
+
+# Load orbax format
+model, tokenizer = MyModel.load_hf("username/my-model", format="orbax")
+```
+
+---
+
+## Loading from Kaggle
+
+Load models directly from Kaggle:
+
+```python
+import kagglehub
+kagglehub.login()
+
+class MyModel(Z): ...
+
+model, _ = MyModel.load_kaggle("username/my-model")
+```
+
+### With variation
+
+```python
+model, _ = MyModel.load_kaggle("username/my-model", variation="v1")
+```
+
+### With sharding
+
+```python
+model, _ = MyModel.load_kaggle("username/my-model", sharding="fsdp")
+```
 
 ---
 
 ## Next Steps
 
-Learn how to scale to multiple devices in [Sharding](./05_sharding.md).
+Learn how to scale to multiple devices in [Sharding](./05_sharding.md) or how to [Push to Hub](./06_push_to_hub.md).

@@ -3,6 +3,8 @@
 import jax, jax.numpy as jnp
 from flax import nnx
 
+from ..utils import get_act_fn
+
 
 class MLP(nnx.Module):
     def __init__(
@@ -34,7 +36,7 @@ class MLP(nnx.Module):
             param_dtype=param_dtype,
             rngs=nnx.Rngs(down_key)
         )
-        self.act_fn = act_fn
+        self.act_fn = get_act_fn(act_fn)
 
     def __call__(self, hidden_states: jax.Array):
         hidden_states = self.act_fn(self.gate_proj(hidden_states)) * self.up_proj(hidden_states)

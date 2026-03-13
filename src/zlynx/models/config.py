@@ -5,48 +5,54 @@ from flax import struct
 
 
 
+@struct.dataclass
+class C:
+    arch: str | None = None
+    conf: str | None = None
+    processor: str | None = None
+    
+    
+
+
+# @struct.dataclass
+# class VisionConfig(C):
+#     ...
+
+
+# @struct.dataclass
+# class AudioConfig(C):
+#     ...
+
 
 @struct.dataclass
-class VisionConfig:
-    ...
-
-
-@struct.dataclass
-class AudioConfig:
-    ...
-
-
-@struct.dataclass
-class LanguageConfig:
-    architecture: str
-    vocab_size: int
-    hidden_size: int
-    intermediate_size: int
-    act_fn: str
-    num_hidden_layers: int
-    norm_eps: float
-    bias: bool
-    dtype: str
-    param_dtype: str
-    use_cache: bool
+class LanguageConfig(C):
+    vocab_size: int | None = None
+    hidden_size: int | None = None
+    intermediate_size: int | None = None
+    act_fn: str | None = None
+    num_hidden_layers: int | None = None
+    norm_eps: float | None = None
+    bias: bool | None = None
+    dtype: str | None = None
+    param_dtype: str | None = None
+    use_cache: bool | None = None
 
     # attn
-    attention_head: int
-    kv_head: int
-    head_dim: int
-    attention_bias: bool
+    attention_head: int | None = None
+    kv_head: int | None = None
+    head_dim: int | None = None
+    attention_bias: bool | None = None
 
     # rope
-    base: float
-    original_max_position_embedding: int
-    max_position_embedding: int
-    rope_scaling: dict | None
+    base: float | None = None
+    original_max_position_embedding: int | None = None
+    max_position_embedding: int | None = None
+    rope_scaling: dict | None = None
 
 
-@struct.dataclass
-class ModelConfig:
-    language_config: LanguageConfig | None = None
-    vision_config: VisionConfig | None = None
-    audio_config: AudioConfig | None = None
-
+# @struct.dataclass
+# class ModelConfig(C):
+#     language_config: LanguageConfig | None = None
+#     vision_config: VisionConfig | None = None
+#     audio_config: AudioConfig | None = None
 

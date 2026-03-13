@@ -25,27 +25,6 @@ def apply_rope(query: jax.Array, key: jax.Array, cos: jax.Array, sin: jax.Array)
     key = key * cos + rotate_half(key) * sin
     return query, key
 
-# def init_rope_llama3(base, head_dim, rope_scaling: dict): 
-
-#     inv_freq = 1.0 / (base ** (jnp.arange(0, head_dim, 2, dtype=jnp.float32) / head_dim))
-
-#     factor = rope_scaling.get("factor", 8.0)
-#     low_freq_factor = rope_scaling.get("low_freq_factor", 1.0)
-#     high_freq_factor = rope_scaling.get("high_freq_factor", 4.0)
-#     old_context_len = rope_scaling.get("original_max_position_embeddings", 8192)
-
-#     low_freq_wavelen = old_context_len / low_freq_factor
-#     high_freq_wavelen = old_context_len / high_freq_factor
-#     wavelen = 2 * jnp.pi / inv_freq
-
-#     inv_freq_llama = jnp.where(wavelen > low_freq_wavelen, inv_freq / factor, inv_freq)
-#     smooth_factor = (old_context_len / wavelen - low_freq_factor) / (high_freq_factor - low_freq_factor)
-#     smoothed_inv_freq = (1 - smooth_factor) * inv_freq_llama / factor + smooth_factor * inv_freq_llama
-#     is_medium_freq = ~(wavelen < high_freq_wavelen) * ~(wavelen > low_freq_wavelen)
-    
-#     inv_freq = jnp.where(is_medium_freq, smoothed_inv_freq, inv_freq_llama)
-#     return inv_freq
-
 
 def init_rope_llama3(base, head_dim, rope_scaling: dict):
     partial_rotary_factor = rope_scaling.get("partial_rotary_factor", 1.0)
@@ -105,8 +84,6 @@ class RoPEConfig:
     K: int = 3              # number of hierarchy levels (gears)
     B: int = 32             # base for position decomposition (gear capacity)
     rope_type: str = "standard"  # "standard" or "hirope"
-
-
 
 
 class RotaryEmbedding(nnx.Module):
