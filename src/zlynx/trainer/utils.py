@@ -4,6 +4,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax import nnx
+from pathlib import Path
+import json
+import datasets
+import grain
+from huggingface_hub import hf_hub_download, HfApi
+from typing import Optional, Any
+
+from .trainer_config import DatasetConfig, TrainerConfig
+
 
 
 def count_params(model) -> int:
@@ -160,3 +169,183 @@ def process_model(model, trconfig):
         return model
 
     raise ValueError(f"Unknown sharding strategy: {sharding}")
+
+def load_dataset(dataset, config: DatasetConfig | None = None):
+    """Load a dataset and return a random-access source for grain.
+
+    Accepts:
+        str: HF dataset name or local path → loaded via datasets.load_dataset
+        datasets.Dataset: used directly (supports __getitem__ + __len__)
+        list: used directly as a random-access source
+        datasets.IterableDataset: NOT supported (grain MapDataset needs random access)
+
+    Returns:
+        A source compatible with grain.MapDataset.source()
+    """
+    config = config or DatasetConfig()
+
+    if isinstance(dataset, str):
+        dataset = datasets.load_dataset(
+            dataset,
+            name=config.subset,
+            split=config.split,
+            streaming=config.streaming,
+        )
+
+    if isinstance(dataset, datasets.Dataset):
+        return dataset
+    elif isinstance(dataset, datasets.IterableDataset):
+        raise TypeError(
+            "Streaming/IterableDataset is not supported for now "
+            "(requires random access). Use streaming=False."
+        )
+    elif isinstance(dataset, list):
+        return dataset
+    elif isinstance(dataset, dict):
+        return datasets.Dataset.from_dict(dataset)
+    else:
+        raise TypeError(f"Unsupported dataset type: {type(dataset)}")
+
+
+
+def process_dataset(ds, dsconfig: DatasetConfig, trconfig: TrainerConfig):
+    """Build a grain pipeline from a raw dataset source.
+
+    Returns:
+        Tuple of (pipeline, num_examples) where pipeline is a grain IterDataset
+        and num_examples is the number of examples in the source (for step estimation).
+    """
+    map_fn = lambda x: dsconfig.preprocessing_fn(x) if dsconfig.preprocessing_fn is not None else x
+    fil_fn = lambda x: dsconfig.filter_fn(x) if dsconfig.filter_fn is not None else True
+    read_opts = grain.ReadOptions(
+        num_threads=dsconfig.num_threads,
+        prefetch_buffer_size=dsconfig.prefetch_buffer_size,
+    )
+
+    source = load_dataset(ds, dsconfig)
+    num_examples = len(source) if hasattr(source, '__len__') else None
+
+    print(grain.DatasetIterator(source))
+    pipeline = grain.MapDataset.source(source)
+
+    if dsconfig.shuffle:
+        pipeline = pipeline.shuffle(seed=dsconfig.shuffle_seed)
+
+    pipeline = (
+        pipeline
+        .map(map_fn)
+        .to_iter_dataset(read_opts)
+        .filter(fil_fn)
+        .batch(batch_size=trconfig.batch_size)
+    )
+
+    return pipeline, num_examples
+
+def hf_list_repo_files(
+    repo_id: str,
+    repo_type: str,
+    token: Optional[str]
+):
+    api = HfApi()
+
+    files = api.list_repo_files(
+        repo_id=repo_id,
+        repo_type=repo_type,
+        token=token
+    )
+
+    return files
+
+
+def hf_load_single():
+    ...
+    
+
+class HFDatasetIterator(grain.DatasetIterator):
+
+  def __init__(self, ds: datasets.IterableDataset):
+    self._reader = "<define your reader>"
+    self._offset = "<get reader's offset>"
+
+  def __next__(self):
+    record = next(self._reader)
+    self._record_offset = "<get reader's offset>"
+    return record
+
+  def get_state(self) -> dict[str, Any]:
+    return {"offset": self._offset}
+
+  def set_state(self, state):
+    self._offset = state["offset"]
+    self._reader.Seek(self._offset)  # Seeks to the correct offset
+
+
+class YourCustomIterDataset(grain.IterDataset):
+
+  def __init__(self, ds: datasets.IterableDataset):
+    super().__init__()
+    self._ds = ds
+
+  def __iter__(self):
+    return HFDatasetIterator(self._ds)
+
+
+
+
+# ─────────────────────────────────────────────────────────────
+# Logger
+# ─────────────────────────────────────────────────────────────
+
+class Logger:
+    """Multi-backend logger supporting stdout, TensorBoard, W&B, and JSON."""
+
+    def __init__(self, backends: list[str], output_dir: str, run_name: str | None = None):
+        self.backends = backends
+        self.output_dir = Path(output_dir)
+        self._tb_writer = None
+        self._json_path = None
+
+        if "tensorboard" in backends:
+            from torch.utils.tensorboard import SummaryWriter
+            tb_dir = self.output_dir / "tb_logs"
+            tb_dir.mkdir(parents=True, exist_ok=True)
+            self._tb_writer = SummaryWriter(log_dir=str(tb_dir))
+
+        if "wandb" in backends:
+            import wandb
+            if not wandb.run:
+                wandb.init(project=run_name or "zlynx", name=run_name)
+
+        if "json" in backends:
+            self._json_path = self.output_dir / "train_log.jsonl"
+            self._json_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def log(self, metrics: dict, step: int):
+        """Log metrics to all active backends."""
+        if "stdout" in self.backends:
+            parts = [f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}" for k, v in metrics.items()]
+            print(f"step {step} | " + " | ".join(parts))
+
+        if "tensorboard" in self.backends and self._tb_writer:
+            for k, v in metrics.items():
+                if isinstance(v, (int, float)):
+                    self._tb_writer.add_scalar(k, v, step)
+            self._tb_writer.flush()
+
+        if "wandb" in self.backends:
+            import wandb
+            wandb.log(metrics, step=step)
+
+        if "json" in self.backends and self._json_path:
+            record = {"step": step, **{k: float(v) if isinstance(v, (int, float, jnp.ndarray)) else v for k, v in metrics.items()}}
+            with open(self._json_path, "a") as f:
+                f.write(json.dumps(record) + "\n")
+
+    def close(self):
+        if self._tb_writer:
+            self._tb_writer.close()
+        if "wandb" in self.backends:
+            import wandb
+            if wandb.run:
+                wandb.finish()
+

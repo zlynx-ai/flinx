@@ -3,31 +3,72 @@
 from flax import nnx, serialization, struct
 from pathlib import Path
 from orbax import checkpoint as ocp
-from typing import Literal, List, Dict, Tuple, Set
+from typing import Literal, List, Dict, Tuple, Set, Optional, Any
 from dataclasses import field
 from safetensors.flax import save_file, load_file
 import os
 import json
 import jax, jax.numpy as jnp
-
-
-from ..utils import get_dtype
-from .. import models
-
 import logging
 import shutil
 import tempfile
 from datetime import datetime
 
-logging.basicConfig(level=logging.INFO, force=True)
-logging.getLogger('absl').setLevel(logging.WARNING)
-logging.getLogger('jax').setLevel(logging.WARNING)
+
+from ..utils import get_dtype
+from .. import models
 
 class Z(nnx.Module):
+    """
+    # Z Class
+
+    Base class for model checkpointing (save/load weights).
+
+    ## Quick Start
+
+    ```python
+    from zlynx import Z
+
+    class MyModel(Z):
+        def __init__(self, config):
+            self.config = config
+            self.embed = nnx.Embed(num_embeddings=1000, features=256)
+            self.linear = nnx.Linear(256, 1000)
+
+    # Save
+    model = MyModel(config)
+    model.save("./my_model")
+
+    # Load
+    model, _ = MyModel.load("./my_model")
+    ```
+
+    ## Methods
+
+    | Method | Description |
+    |--------|-------------|
+    | `save(path)` | Save model weights to disk |
+    | `load(path)` | Load model weights (classmethod) |
+    | `load_hf(repo_id)` | Load from HuggingFace |
+    | `push_hf(repo_id)` | Push to HuggingFace |
+    | `load_kaggle(repo_id)` | Load from Kaggle |
+    | `push_kaggle(repo_id)` | Push to Kaggle |
+
+    ## Formats
+
+    - `orbax` (default) - JAX native, fast
+    - `safetensors` - Cross-platform, compatible with HF
+
+    ## Notes
+
+    - Inherit from `Z` to get save/load for free
+    - Requires `config` attribute for saving config
+    - Auto-detects architecture when using `Z.load()` directly
+    """
 
     # return config
     @classmethod
-    def load_config(cls, path: str | Path, asdict = False, config_map: Dict = {}):
+    def load_config(cls, path: str | Path, asdict: bool = False, config_map: Optional[Dict] = None) -> Any:
         path = Path(path).resolve()
 
         assert (path / "config.json").exists(), \
@@ -36,7 +77,8 @@ class Z(nnx.Module):
         with open(path / "config.json", "r") as config_file:
             config_dict: dict = json.load(config_file)
 
-        config_dict = {config_map[k] if k in config_map else k:v for k, v in config_dict.items()}
+        if config_map is not None:
+            config_dict = {config_map[k] if k in config_map else k:v for k, v in config_dict.items()}
 
         if asdict:
             return config_dict
@@ -64,7 +106,9 @@ class Z(nnx.Module):
 
         return config_class(**config_dict)
 
-    def _load_safetensors(state: nnx.State, path: str, module_map: Dict={}):
+    def _load_safetensors(state: nnx.State, path: str, module_map: Optional[Dict] = None) -> nnx.State:
+        if module_map is None:
+            module_map = {}
 
         index_path = os.path.join(path, "model.safetensors.index.json")
         with open(index_path, "r") as f:
@@ -79,31 +123,43 @@ class Z(nnx.Module):
             files_to_load[file_name].append(k_str)
 
         current_state = nnx.to_flat_state(state)
+        current_state_dict = dict(current_state) 
         new_state = []
+        not_found_some = None
 
         for file_name, keys_in_file in files_to_load.items():
             shard_path = os.path.join(path, file_name)
-
             shard_data = load_file(shard_path) 
             
             for k_str in keys_in_file:
                 k_tuple = tuple(
-                    int(m) if m.isdigit() \
-                        else module_map[m] \
-                            if m in module_map \
-                                else m for m in k_str.split(".")
+                    int(m) if m.isdigit() else module_map.get(m, m) 
+                    for m in k_str.split(".")
                 )
                 
-                if k_tuple in current_state._keys:
-                    instance = type(dict(current_state)[k_tuple])
-                    sharding = dict(current_state)[k_tuple].sharding
-                    value = shard_data[k_str]
+                if k_tuple in current_state_dict:
+                    target_var = current_state_dict[k_tuple]
+                    instance = type(target_var)
                     
-                    new_state.append((k_tuple, jax.device_put(instance(value), sharding)))
+                    sharding = getattr(target_var, "sharding", None) 
+                    
+                    value = shard_data[k_str] 
+                    
+                    if sharding is not None:
+                        device_value = jax.device_put(instance(value), sharding)
+                    else:
+                        device_value = jax.device_put(instance(value))
+                        
+                    new_state.append((k_tuple, device_value))
                 else:
-                    print(f"{k_str} not found in the model")
+                    not_found_some = True
+                    print(f"{k_str} not found in this model.")
             
             del shard_data
+
+            if not_found_some is not None and not_found_some:
+                print(" some modules are not found in this model you may can try to change the module name with module_map.")
+                print(" e.g. module_map = {'target_module': 'name_to_change',}")
 
         nnx.update(state, nnx.FlatState(new_state, sort=False).to_nested_state())
         return state
@@ -112,14 +168,14 @@ class Z(nnx.Module):
     def load(
         cls, path: str | Path, 
         *,
-        dtype=None, 
+        dtype: str | None=None, 
         config=None, 
-        config_map: Dict={},
-        module_map: Dict={},
-        sharding=None,
+        config_map: Optional[Dict]=None,
+        module_map: Optional[Dict]=None,
+        sharding: int | str | None=None,
         format: Literal["orbax", "safetensors"]="orbax",
         **kwargs
-    ):
+    ) -> Tuple["Z", Optional[Any]]:
         path = Path(path).resolve()
 
         if config is None:
@@ -223,7 +279,7 @@ class Z(nnx.Module):
         setattr(model, "processor", processor)
         return model, processor
     
-    def _save_safetensors(self, path, max_shard_size_gb=3):
+    def _save_safetensors(self, path: str | Path, max_shard_size_gb: float=3.0) -> None:
         
         os.makedirs(path, exist_ok=True)
 
@@ -282,9 +338,9 @@ class Z(nnx.Module):
 
     def save(
         self, path: str | Path, *, 
-        format: Literal["orbax", "safetensors", "all"] = "orbax", 
-        max_shard_size_gb=3
-    ):
+        format: Literal["orbax", "safetensors"] = "orbax", 
+        max_shard_size_gb: float=3.0
+    ) -> None:
         if isinstance(path, str):
             path = Path(path)
 
@@ -301,13 +357,13 @@ class Z(nnx.Module):
                 if tmp_path.exists():
                     shutil.rmtree(tmp_path)
                 
-                if format in ["orbax", "all"]:
+                if format == "orbax":
                     state = nnx.state(self)
                     checkpointer = ocp.StandardCheckpointer()
                     checkpointer.save(tmp_path, state)
                     checkpointer.wait_until_finished()
                 
-                if format in ["safetensors", "all"]:
+                if format == "safetensors":
                     self._save_safetensors(tmp_path, max_shard_size_gb=max_shard_size_gb)
 
                 processor = getattr(self, "processor", None)
@@ -331,11 +387,11 @@ class Z(nnx.Module):
 
 
     def push_hf(
-        self, repo_id, 
-        private,
+        self, repo_id: str, 
+        private: bool = False,
         *,
         format: Literal["orbax", "safetensors"]="safetensors", 
-        max_shard_size_gb: float = 3,
+        max_shard_size_gb: float = 3.0,
         **kwargs
     ):
         from huggingface_hub import create_repo, upload_folder
@@ -392,11 +448,11 @@ class Z(nnx.Module):
                 logging.error(e)
 
     def push_kaggle(
-        self, repo_id, 
-        variation="default", *, 
+        self, repo_id: str, 
+        variation: str="default", *, 
         format: Literal["orbax", "safetensors"]="safetensors", 
-        max_shard_size_gb: int=3, **kwargs
-    ):
+        max_shard_size_gb: float=3.0, **kwargs
+    ) -> None:
         """
         ### login kaggle:
         ```python
@@ -452,19 +508,22 @@ class Z(nnx.Module):
     def load_hf(
         cls, repo_id: str, 
         *,
-        dtype=None, 
-        config=None, 
-        config_map: Dict={},
-        module_map: Dict={},
-        sharding=None,
+        dtype: Optional[str]=None, 
+        config: Optional[Any]=None, 
+        config_map: Optional[Dict]=None,
+        module_map: Optional[Dict]=None,
+        sharding: Literal["ddp", "fsdp"]=None,
         format: Literal["orbax", "safetensors"]="safetensors",
-        hf_kwargs: dict={},
+        hf_kwargs: Optional[Dict]=None,
         **model_kwargs
-    ):
+    ) -> Tuple["Z", Optional[Any]]:
         
         from huggingface_hub import snapshot_download
 
-        local_dir = snapshot_download(repo_id=repo_id, repo_type="model", **hf_kwargs)
+        local_dir = snapshot_download(
+            repo_id=repo_id, repo_type="model", 
+            **(hf_kwargs if hf_kwargs is not None else {})
+        )
         path = Path(local_dir).resolve()
 
         model, processor = cls.load(
@@ -484,18 +543,21 @@ class Z(nnx.Module):
         cls, repo_id: str, 
         variation: str="default",
         *,
-        dtype=None, 
-        config=None, 
-        config_map: Dict={},
-        module_map: Dict={},
-        sharding=None,
+        dtype: Optional[str]=None, 
+        config: Optional[Any]=None, 
+        config_map: Optional[Dict]=None,
+        module_map: Optional[Dict]=None,
+        sharding: Optional[Literal["ddp", "fsdp"]]=None,
         format: Literal["orbax", "safetensors"]="safetensors",
-        kaggle_kwargs: dict={},
+        kaggle_kwargs: Optional[Dict]=None,
         **model_kwargs
-    ):
+    ) -> Tuple["Z", Optional[Any]]:
         import kagglehub
 
-        local_dir = kagglehub.model_download(f"{repo_id}/flax/{variation}", **kaggle_kwargs)
+        local_dir = kagglehub.model_download(
+            f"{repo_id}/flax/{variation}", 
+            **(kaggle_kwargs if kaggle_kwargs is not None else {})
+        )
         path = Path(local_dir).resolve()
 
         model, processor = cls.load(

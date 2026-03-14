@@ -44,6 +44,7 @@ def sample_token(
         cumulative_probs = jnp.cumsum(jax.nn.softmax(sorted_logits, axis=-1), axis=-1)
 
         mask = cumulative_probs > top_p
+
         mask = jnp.roll(mask, 1, axis=-1)
         mask = mask.at[:, 0].set(False)  # Always keep at least the most probable token
 
@@ -66,15 +67,6 @@ class LanguageModel:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
         self.config = kwargs.get("config", None)
-
-    def set_config(self, **kwargs):
-        if self.config is not None:
-            if hasattr(self.config, "replace"):
-                self.config = self.config.replace(**kwargs)
-            else:
-                for k, v in kwargs.items():
-                    setattr(self.config, k, v)
-            self.kwargs["config"] = self.config
 
     def init_cache(self, batch_size: int, max_seq_len: int):
         from ..modules.cache import KVCache
@@ -215,3 +207,7 @@ class LanguageModel:
 
         return out_ids
 
+
+class DiffusionModel:
+    def __init__(self):
+        pass
