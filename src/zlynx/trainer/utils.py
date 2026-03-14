@@ -225,7 +225,6 @@ def process_dataset(ds, dsconfig: DatasetConfig, trconfig: TrainerConfig):
     source = load_dataset(ds, dsconfig)
     num_examples = len(source) if hasattr(source, '__len__') else None
 
-    print(grain.DatasetIterator(source))
     pipeline = grain.MapDataset.source(source)
 
     if dsconfig.shuffle:
